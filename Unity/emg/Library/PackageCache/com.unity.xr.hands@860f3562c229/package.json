@@ -1,0 +1,49 @@
+{
+  "name": "com.unity.xr.hands",
+  "displayName": "XR Hands",
+  "version": "1.5.1",
+  "unity": "2021.3",
+  "description": "Surfaces the cross-platform subsystem API for hand-tracking. Implementations of providers will be found in the package for that platform.",
+  "keywords": [
+    "xr",
+    "vr",
+    "virtual",
+    "reality",
+    "hand",
+    "tracking",
+    "hands",
+    "subsystem"
+  ],
+  "dependencies": {
+    "com.unity.inputsystem": "1.3.0",
+    "com.unity.modules.xr": "1.0.0",
+    "com.unity.xr.core-utils": "2.2.0",
+    "com.unity.xr.management": "4.0.1",
+    "com.unity.mathematics": "1.2.6"
+  },
+  "_upm": {
+    "changelog": "### Added\n\n- Added support for Android XR as a part of the `HandVisualizer` sample. This update includes an OpenXR runtime check to determine the hand meshes to use for visualization.\n- Added Android XR variants of the sample hand meshes provided in the `HandVisualizer` sample package.\n\n### Fixed\n\n- Fixed the help documentation links in the OpenXR Project Settings where hands features were exposed in the Feature Groups editor window.\n- Recompiled the native plug-in with support for [16 KB page sizes](https://developer.android.com/guide/practices/page-sizes) on Android 15 or newer."
+  },
+  "upmCi": {
+    "footprint": "220692c827d5f6e9ec4b6056976ac17cee540ef2"
+  },
+  "documentationUrl": "https://docs.unity3d.com/Packages/com.unity.xr.hands@1.5/manual/index.html",
+  "repository": {
+    "url": "https://github.cds.internal.unity3d.com/unity/com.unity.xr.hands.git",
+    "type": "git",
+    "revision": "ea5ae0173da360126c5e9a1751ff74f888424773"
+  },
+  "samples": [
+    {
+      "displayName": "Gestures",
+      "description": "Sample showing how to detect and debug hand gestures.",
+      "path": "Samples~/Gestures"
+    },
+    {
+      "displayName": "HandVisualizer",
+      "description": "Basic sample showing how visualize hands.",
+      "path": "Samples~/HandVisualizer"
+    }
+  ],
+  "_fingerprint": "860f3562c229c2228869eacf1aacac0f8863bc80"
+}
