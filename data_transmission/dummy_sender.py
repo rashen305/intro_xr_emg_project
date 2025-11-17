@@ -1,6 +1,7 @@
 import socket
 import json
 import time
+import random
 
 '''
 This file implements a dummy socket data sender that transmits JSON-formatted data
@@ -81,14 +82,22 @@ if __name__ == "__main__":
     while True:
         send_count += 1
         print(f"\n--- Sending Packet #{send_count} ---")
+
+        # --- Payload ---
+        # The dummy JSON packet we want to send
+        dummy_data = {
+            "classification": "pinch",
+            "confidence": random.randint(0, 100)
+        }
+        # Convert the Python dictionary to a JSON string and then to bytes
+        json_string = json.dumps(dummy_data)
         
         # 1. Send via TCP
         # Note: TCP requires the receiver (Unity) to be listening and to accept the connection.
-        send_tcp_data(HOST, TCP_PORT, JSON_STRING)
-        
+        send_tcp_data(HOST, TCP_PORT, json_string)
         # 2. Send via UDP
         # Note: UDP does not require a connection, so it sends immediately even if the receiver isn't ready.
-        send_udp_data(HOST, UDP_PORT, JSON_STRING)
-        
+        send_udp_data(HOST, UDP_PORT, json_string)
+
         # Wait for 1 second before sending the next packet
         time.sleep(1)
