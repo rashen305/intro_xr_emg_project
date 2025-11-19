@@ -66,6 +66,7 @@ int main(int argc, char** argv)
 
     // First, we create a Hub with our application identifier. Be sure not to use the com.example namespace when
     // publishing your application. The Hub provides access to one or more Myos.
+    
     myo::Hub hub("com.example.emg-data-sample");
 
     std::cout << "Attempting to find a Myo..." << std::endl;
