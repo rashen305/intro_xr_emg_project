@@ -2,6 +2,7 @@
 // Distributed under the Myo SDK license agreement. See LICENSE.txt for details.
 
 // EMG data collector with TCP socket transmission to PyTorch model
+// Sends real-time EMG data via TCP socket
 // Compile with: g++ emg-to-pytorch.cpp -I../include -L../lib -lmyo64 -lws2_32 -o emg-to-pytorch
 
 #include <array>
@@ -9,7 +10,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <fstream>
 #include <chrono>
 #include <iomanip>
 #include <thread>
@@ -146,26 +146,15 @@ private:
 
 class DataCollector : public myo::DeviceListener {
 public:
-    DataCollector(const std::string& csvFilename, SocketSender* socketSender = nullptr)
+    DataCollector(SocketSender* socketSender = nullptr)
     : emgSamples()
-    , csvFile(csvFilename)
     , socketSender_(socketSender)
     , sampleCount(0)
     , startTime(std::chrono::high_resolution_clock::now())
     {
-        // Write CSV header
-        if (csvFile.is_open()) {
-            csvFile << "timestamp,sample_number,emg1,emg2,emg3,emg4,emg5,emg6,emg7,emg8\n";
-            csvFile.flush();
-        } else {
-            throw std::runtime_error("Unable to open CSV file for writing");
-        }
     }
     
     ~DataCollector() {
-        if (csvFile.is_open()) {
-            csvFile.close();
-        }
         std::cout << "\nTotal samples collected: " << sampleCount << std::endl;
     }
 
@@ -184,21 +173,6 @@ public:
         // Calculate elapsed time in seconds
         auto currentTime = std::chrono::high_resolution_clock::now();
         double elapsedTime = std::chrono::duration<double>(currentTime - startTime).count();
-        
-        // Write to CSV
-        if (csvFile.is_open()) {
-            csvFile << std::fixed << std::setprecision(6) << elapsedTime << ","
-                    << sampleCount;
-            for (int i = 0; i < 8; i++) {
-                csvFile << "," << static_cast<int>(emg[i]);
-            }
-            csvFile << "\n";
-            
-            // Flush every 100 samples to ensure data is written
-            if (sampleCount % 100 == 0) {
-                csvFile.flush();
-            }
-        }
         
         // Send to PyTorch via socket (JSON format)
         if (socketSender_ && socketSender_->isConnected()) {
@@ -246,7 +220,6 @@ public:
 
 private:
     std::array<int8_t, 8> emgSamples;
-    std::ofstream csvFile;
     SocketSender* socketSender_;
     uint64_t sampleCount;
     std::chrono::high_resolution_clock::time_point startTime;
@@ -272,16 +245,8 @@ int main(int argc, char** argv)
     }
     
     try {
-        // Generate filename with timestamp
-        auto now = std::chrono::system_clock::now();
-        auto timestamp = std::chrono::system_clock::to_time_t(now);
-        std::stringstream filenameStream;
-        filenameStream << "emg_data_" << timestamp << ".csv";
-        std::string filename = filenameStream.str();
-        
         std::cout << "=====================================" << std::endl;
         std::cout << "EMG Data Collector - 200Hz Sampling" << std::endl;
-        std::cout << "CSV file: " << filename << std::endl;
         if (enableSocket) {
             std::cout << "Socket: " << socketHost << ":" << socketPort << std::endl;
         }
@@ -310,8 +275,8 @@ int main(int argc, char** argv)
         // Enable EMG streaming at 200Hz
         myo->setStreamEmg(myo::Myo::streamEmgEnabled);
 
-        // Create data collector with CSV file and socket sender
-        DataCollector collector(filename, socketSender);
+        // Create data collector with socket sender
+        DataCollector collector(socketSender);
 
         hub.addListener(&collector);
 
