@@ -1,5 +1,11 @@
 # train_single_subject_myo_fixed.py
 import os
+import sys
+
+# Workaround for Windows DLL loading issue
+# Set environment variable before importing torch
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
 import numpy as np
 import pandas as pd
 from scipy.signal import butter, filtfilt, iirnotch, stft, detrend
@@ -32,10 +38,13 @@ LABELS = {"rest": 0, "pinch": 1}
 # New Files for Raymond (200 Hz)
 # ===========================
 DATA_FILES = [
-    ("./myo/samples/raymond_arm_90_deg_200hz.csv", LABELS["rest"]),
-    ("./myo/samples/raymond_arm_90_deg_pinch_200hz.csv", LABELS["pinch"]),
-    ("./myo/samples/raymond_arm_down_200hz.csv", LABELS["rest"]),
-    ("./myo/samples/raymond_arm_down_pinch_200hz.csv", LABELS["pinch"])
+    ("../myo/samples/raymond_arm_90_deg_200hz.csv", LABELS["rest"]),
+    ("../myo/samples/raymond_arm_90_deg_pinch_200hz.csv", LABELS["pinch"]),
+    ("../myo/samples/raymond_arm_down_200hz.csv", LABELS["rest"]),
+    ("../myo/samples/raymond_arm_down_pinch_200hz.csv", LABELS["pinch"]),
+    ("../myo/samples/raymond_bending_arm.csv", LABELS["rest"]),
+    ("../myo/samples/raymond_bending_arm_pinch.csv", LABELS["pinch"]),
+    ("../myo/samples/raymond_swing_arm.csv", LABELS["rest"])
 ]
 
 # ===========================
@@ -233,7 +242,7 @@ def train_single_subject():
     plt.title("Raymond 200 Hz — Confusion Matrix")
     plt.show()
 
-    save_path = "train_single_subject_myo_model.pth"
+    save_path = "train_single_subject_myo_model_swing.pth"
     torch.save(model.state_dict(), save_path)
     print(f"Pretrained model weights saved to '{save_path}'")
 

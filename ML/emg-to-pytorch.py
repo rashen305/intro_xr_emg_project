@@ -8,7 +8,7 @@ import collections
 import numpy as np
 
 # --- IMPORT THE DEDICATED INFERENCE FUNCTION ---
-from inference_function import run_inference 
+from inference import run_inference 
 
 # --- Configuration ---
 HOST = '127.0.0.1'  # Must match the C++ sender's host
@@ -127,14 +127,12 @@ def inference_worker_thread():
                 prediction, details = actual_inference_caller(data_array)
                 inference_time = (time.time() - start_time) * 1000 # in ms
 
-                # Print the results
+                # Print the results on the same line (overwrites previous output)
                 latest_timestamp = window_data[-1][0]
-                print(f"=====================================================")
-                print(f"Inference Complete (Time: {inference_time:.2f} ms)")
-                print(f"Window End Time: {latest_timestamp:.6f}s")
-                print(f"Prediction: **{prediction}**")
-                print(f"Details (Mean Abs): {np.round(details, 2)}")
-                print(f"=====================================================")
+                print(f"\rTime: {inference_time:.2f}ms | "
+                      f"Timestamp: {latest_timestamp:.3f}s | "
+                      f"Prediction: **{prediction}** | "
+                      f"Mean Abs: {np.round(details, 2)}", end='', flush=True)
                 
             except Exception as e:
                 print(f"❌ Worker: Error during inference: {e}")

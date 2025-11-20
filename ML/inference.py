@@ -152,8 +152,8 @@ def load_model_and_params(model_path: str, normalization_path: str):
                  print("⚠️ Model: Normalization parameters (mean/std) are set to placeholder values. Update them from your training script!")
                  # Set a neutral placeholder if actual values aren't loaded/set
                  # This will result in poor performance unless corrected.
-                 _MEAN = np.zeros((1, 8, 1, 1), dtype=np.float32)
-                 _STD = np.ones((1, 8, 1, 1), dtype=np.float32)
+                 # We'll set these to None and handle normalization dynamically in run_inference
+                 pass
 
         except Exception as e:
             print(f"❌ Model: Failed to load normalization parameters. Error: {e}")
@@ -176,6 +176,7 @@ def run_inference(emg_window: np.ndarray) -> str:
     Returns:
         The predicted class name (e.g., "rest", "pinch").
     """
+    global _MODEL, _MEAN, _STD
     
     if _MODEL is None:
         # Load model with placeholder paths if not already loaded
@@ -197,6 +198,17 @@ def run_inference(emg_window: np.ndarray) -> str:
     X = np.log1p(X_spec)
     # The normalization parameters must have been calculated over the entire
     # training set for ALL axes (0, 2, 3), but applied per channel.
+    # Handle case where normalization params aren't loaded yet
+    if _MEAN is None or _STD is None:
+        # Fallback: use zero mean and unit std if normalization not loaded
+        # This ensures the code doesn't crash, but performance will be poor
+        # until proper normalization parameters are set
+        _MEAN = np.zeros_like(X)
+        _STD = np.ones_like(X)
+        print("⚠️ Warning: Using fallback normalization (zero mean, unit std). Model performance may be poor.")
+    
+    # Ensure shapes are compatible for broadcasting
+    # _MEAN and _STD should be shape (8, F, T) or broadcastable to it
     X = (X - _MEAN) / _STD
     
     # 3. Prepare for PyTorch model (Add batch dimension)
