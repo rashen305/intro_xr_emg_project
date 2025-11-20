@@ -233,6 +233,9 @@ def train_single_subject():
     plt.title("Raymond 200 Hz — Confusion Matrix")
     plt.show()
 
+    save_path = "train_single_subject_myo_model.pth"
+    torch.save(model.state_dict(), save_path)
+    print(f"Pretrained model weights saved to '{save_path}'")
 
 # ===========================
 # Main
