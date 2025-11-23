@@ -10,13 +10,16 @@ The project structure assumes the core Python modules and notebooks are containe
 ```
 intro_xr_emg_project/
 ├── ml/
-│   ├── cnn_model.py                # CNN Architecture & Training Module (PyTorch)
+│   ├── models/                     # Contains all machine learning models we are exploring
+│   │   └── cnn_model.py            # CNN Architecture & Training Module (PyTorch)
 │   ├── emg_preprocessing.py        # Data Processing Logic (Filtering, STFT, Dataset)
 │   ├── train.ipynb                 # Primary Training Notebook
 │   ├── evaluate.ipynb              # Evaluation/Verification Notebook
 │   ├── README.md                   # Project Documentation (This file)
 │   ├── **init**.py                 # Makes 'ml' a Python package (Recommended)
-│   └── normalization_params.npy    # 💾 GENERATED: Data Mean and Standard Deviation
+|   ├── normalization_params.npy    # 💾 GENERATED: Data Mean and Standard Deviation
+│   └── weights/                    # Model weights files
+|       └── *.pth
 ├── myo/
 │   └── samples/
 │       ├── raymond_arm_90_deg_200hz.csv       # 📊 Input Data File (Example)
@@ -31,12 +34,12 @@ intro_xr_emg_project/
 
 | File / Module | Function | Details |
 | :--- | :--- | :--- |
-| **`cnn_model.py`** | **Model & Training Module** | Defines the **`CNNmodel`** class, which contains the complete 2D-CNN architecture. Importantly, it includes integrated methods (`train_epoch`, `test_epoch`, and the high-level `train`) that encapsulate the optimization, loss, and full training loop logic. |
+| **`cnn_model.py`** | **Model & Training Module** | Defines the **`CNNModel`** class, which contains the complete 2D-CNN architecture. Importantly, it includes integrated methods (`train_epoch`, `test_epoch`, and the high-level `train`) that encapsulate the optimization, loss, and full training loop logic. |
 | **`emg_preprocessing.py`** | **Data Pipeline** | Contains all constant definitions, filtering methods (`preprocess`), and the PyTorch **`EMGDataset`** class. It ensures consistent EMG signal preprocessing (detrending, filtering, STFT) across all stages. |
-| **`train.ipynb`** | **Training Script** | Loads data, calculates and saves **normalization parameters**, initializes the `CNNmodel`, and executes the full training process via `model.train()`. It saves the final model weights. |
+| **`train.ipynb`** | **Training Script** | Loads data, calculates and saves **normalization parameters**, initializes the `CNNModel`, and executes the full training process via `model.train()`. It saves the final model weights. |
 | **`evaluate.ipynb`** | **Verification Script** | Loads a pre-trained model and normalization parameters to assess performance on new or test data and visualizes the results (Confusion Matrix). |
 | **`normalization_params.npy`** | **Critical Metadata** | A NumPy binary file containing the **global mean ($\mu$) and standard deviation ($\sigma$)** calculated *only* from the training data. This must be used to scale all future input data. |
-| **`*.pth`** | **Model Output** | The file containing the PyTorch **state dictionary** (weights and biases) of the trained `CNNmodel` after all epochs are complete. |
+| **`*.pth`** | **Model Output** | The file containing the PyTorch **state dictionary** (weights and biases) of the trained `CNNModel` after all epochs are complete. |
 
 ---
 

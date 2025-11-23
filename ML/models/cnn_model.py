@@ -4,7 +4,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import numpy as np 
 
-class CNNmodel(nn.Module):
+class CNNModel(nn.Module):
     """
     CNN model architecture for EMG classification using Spectrogram features.
     This class acts as a training module, handling its own architecture, 

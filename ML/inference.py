@@ -181,7 +181,7 @@ def run_inference(emg_window: np.ndarray) -> str:
     if _MODEL is None:
         # Load model with placeholder paths if not already loaded
         # YOU MUST REPLACE THE PATHS BELOW with your saved files
-        model_file = "train_single_subject_myo_model.pth"
+        model_file = "./weights/train_single_subject_myo_model.pth"
         norm_file = "normalization_params.npy" # Placeholder
         load_model_and_params(model_file, norm_file)
         
