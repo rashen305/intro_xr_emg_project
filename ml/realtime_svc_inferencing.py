@@ -1,6 +1,5 @@
 # This file implements the EMG listener and realtime ML inference portions of the pipeline
-# MODIFIED for Support Vector Classification (SVC) using RMS features.
-# It now includes the required high-pass filtering step.
+# It uses a trained SVC model, applying RMS features and required high-pass filtering.
 
 import socket
 import threading
@@ -9,8 +8,6 @@ import time
 import collections
 import numpy as np
 import pickle
-# New required imports for filtering
-from sklearn.preprocessing import scale 
 from scipy import signal 
 from constants import FS, N_CHANNELS, HP_CUTOFF_FREQ, HP_ORDER, N_CHANNELS, WINDOW_SIZE
 
@@ -34,14 +31,15 @@ stop_event = threading.Event()
 # --------------------------------------------------------------------------
 
 # 1. Design the High-Pass filter coefficients once globally
+# b and a are the numerator and denominator coefficients of the filter
 b_hp, a_hp = signal.butter(HP_ORDER, HP_CUTOFF_FREQ, btype='highpass', fs=FS)
 
 def load_svc_model(filepath="svc_model.pkl"):
-    """Loads the trained SVC model."""
+    """Loads the trained SVC model pipeline."""
     try:
         with open(filepath, 'rb') as f:
             model = pickle.load(f)
-        print(f"🧠 Model: Successfully loaded SVC model from {filepath}")
+        print(f"🧠 Model: Successfully loaded SVC pipeline from {filepath}")
         return model
     except FileNotFoundError:
         print(f"❌ Model: ERROR: Model file not found at {filepath}. Please train and save the model first.")
@@ -57,32 +55,29 @@ SVC_MODEL = load_svc_model()
 
 def extract_rms_features(data_window: np.ndarray) -> np.ndarray:
     """
-    Applies high-pass filtering, calculates the Root Mean Square (RMS) feature 
-    for each channel, and scales the result.
+    Applies high-pass filtering and calculates the Root Mean Square (RMS) feature.
+    
+    The scaling step is intentionally omitted here as the loaded SVC_MODEL 
+    is a Scikit-learn pipeline that includes a StandardScaler.
     
     Input: data_window (np.ndarray) of shape (FEATURE_WINDOW, 8)
     Output: feature_vector (np.ndarray) of shape (1, 8)
     """
     
     # 1. Apply High-Pass Filter (Zero-Phase Lag)
-    # NOTE: Using filtfilt on small streaming windows is an approximation of 
-    # the training preprocessing, and is technically non-causal. A dedicated 
-    # stateful IIR filter (signal.lfilter) is better for strict real-time, 
-    # but this matches the filtfilt step in your training script.
+    # This must match the filtering used during training.
     emg_filtered = signal.filtfilt(b_hp, a_hp, data_window, axis=0)
 
     # 2. Calculate RMS: sqrt(mean(x^2)) for each of the 8 channels (axis=0)
-    # Use the filtered data for RMS calculation
     rms_features = np.sqrt(np.mean(np.square(emg_filtered), axis=0))
     
-    # 3. Reshape to (1, 8) to match the expected scikit-learn input for prediction
+    # 3. Reshape to (1, 8) for scikit-learn's prediction input (1 sample, 8 features)
     feature_vector = rms_features.reshape(1, -1)
     
-    # 4. Apply scaling/normalization
-    # This scaling must match the scaling used during training (e.g., StandardScaler).
-    feature_vector_scaled = scale(feature_vector, axis=1) 
+    # 4. NOTE: No external scaling is performed here. The loaded SVC_MODEL pipeline 
+    # will apply the required Standard Scaling using the parameters learned during training.
 
-    return feature_vector_scaled
+    return feature_vector
 
 # --------------------------------------------------------------------------
 # --- Actual ML Inference Function ---
@@ -91,17 +86,14 @@ def extract_rms_features(data_window: np.ndarray) -> np.ndarray:
 def actual_inference_caller(data_window: np.ndarray):
     """
     Performs RMS feature extraction and then SVC classification.
-    
-    The input `data_window` is a NumPy array of raw EMG samples 
-    of shape (FEATURE_WINDOW, 8).
     """
     if SVC_MODEL is None:
-        return -1, np.zeros(8) # Return a safe prediction if model failed to load
+        return -1, np.zeros(N_CHANNELS)
         
-    # 1. Feature Extraction (RMS + Filtering)
+    # 1. Feature Extraction (Filtering + RMS)
     feature_vector = extract_rms_features(data_window)
     
-    # 2. Run SVC Classification
+    # 2. Run SVC Classification (Pipeline handles internal scaling)
     prediction = SVC_MODEL.predict(feature_vector)[0]
     
     # 3. Calculate details for logging (e.g., mean absolute value of the raw data)
@@ -110,7 +102,7 @@ def actual_inference_caller(data_window: np.ndarray):
     return prediction, mean_abs_emg
 
 # --------------------------------------------------------------------------
-# --- Thread 1: Data Listener and Buffer Manager (Unchanged) ---
+# --- Thread 1: Data Listener and Buffer Manager ---
 # --------------------------------------------------------------------------
 
 def data_listener_thread():
@@ -131,6 +123,7 @@ def data_listener_thread():
                 json_buffer = "" 
                 
                 while not stop_event.is_set():
+                    # Receive small chunks of data
                     data = conn.recv(64).decode('utf-8') 
                     
                     if not data:
@@ -138,6 +131,7 @@ def data_listener_thread():
                         
                     json_buffer += data 
                     
+                    # Process completed JSON objects
                     while '}\n' in json_buffer:
                         end_index = json_buffer.find('}\n') + 1 
                         
@@ -159,6 +153,7 @@ def data_listener_thread():
                                     
                         except json.JSONDecodeError as e:
                             print(f"❌ Listener: JSON Decode Error: {e}. Buffer content: '{json_str[:50]}...'")
+                            # Attempt to recover by dropping up to the next potential JSON start
                             next_start = json_buffer.find('{')
                             if next_start != -1:
                                 json_buffer = json_buffer[next_start:]
@@ -173,10 +168,10 @@ def data_listener_thread():
              print(f"❌ Listener: An unexpected error occurred: {e}")
     finally:
         print("📡 Listener: Thread stopped.")
-        stop_event.set() 
+        stop_event.set() # Ensure the worker thread also stops
 
 # --------------------------------------------------------------------------
-# --- Thread 2: ML Inference Worker (Unchanged logic) ---
+# --- Thread 2: ML Inference Worker ---
 # --------------------------------------------------------------------------
 
 def inference_worker_thread():
@@ -192,21 +187,28 @@ def inference_worker_thread():
         with buffer_lock:
             current_buffer_size = len(emg_buffer)
             
+        # Check if we have enough new data for an inference window
         if current_buffer_size >= FEATURE_WINDOW:
             
+            # --- Safely extract the data window ---
             recent_data = None
             with buffer_lock:
+                # Extract only the last FEATURE_WINDOW samples
                 recent_data = list(emg_buffer)[-FEATURE_WINDOW:] 
             
             if recent_data is None:
                 continue
                 
+            # Separate the raw EMG data from the timestamp
+            # Convert to float64 for compatibility with filtering/NumPy math
             data_window = np.array([item[1] for item in recent_data], dtype=np.float64)
             latest_timestamp = recent_data[-1][0]
             
+            # --- Run Inference ---
             try:
                 prediction, details = actual_inference_caller(data_window)
                 
+                # Print results in a single line (using carriage return)
                 print(f"\r[t={latest_timestamp:.3f}s | "
                       f"Prediction: **{prediction}** | "
                       f"RMS: {np.round(details, 2)}]", end='', flush=True)
@@ -215,12 +217,13 @@ def inference_worker_thread():
                 print(f"\n❌ Worker: Error during inference: {e}")
                 
         else:
-            time.sleep(0.01)
+            # Wait a short period if the buffer is not yet full enough
+            time.sleep(0.01) # 10 ms sleep
             
     print("\n🧠 Worker: Thread stopped.")
 
 # --------------------------------------------------------------------------
-# --- Main Execution (Unchanged) ---
+# --- Main Execution ---
 # --------------------------------------------------------------------------
 
 def main():
@@ -230,6 +233,7 @@ def main():
         print("🛑 Main: Cannot run inference without a loaded SVC model. Exiting.")
         return
 
+    # 1. Initialize and start the threads
     listener_thread = threading.Thread(target=data_listener_thread)
     worker_thread = threading.Thread(target=inference_worker_thread)
     
@@ -237,6 +241,7 @@ def main():
     worker_thread.start()
     
     try:
+        # 2. Keep the main thread alive and responsive to Ctrl+C
         while not stop_event.is_set():
             time.sleep(1) 
             
@@ -244,6 +249,7 @@ def main():
         print("\n🛑 Main: Shutdown signal received (Ctrl+C).")
         
     finally:
+        # 3. Signal threads to stop and wait for them to finish
         stop_event.set()
         print("🛑 Main: Waiting for threads to terminate...")
         
