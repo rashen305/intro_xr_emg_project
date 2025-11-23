@@ -19,8 +19,9 @@ def preprocess_rms(data_path: str) -> np.ndarray:
         print(f"File not found: {data_path}")
         return np.array([])
         
-    # Assuming EMG data is in the first N_CHANNELS columns
-    emg_data = df.iloc[:, :N_CHANNELS].values 
+    # EMG columns look like this:
+    # timestamp,sample_number,emg1,emg2,emg3,emg4,emg5,emg6,emg7,emg8
+    emg_data = df.iloc[:, 2:2+N_CHANNELS].values 
 
     # 1. Design the 4th order 10Hz High-Pass filter
     # Note: HP_ORDER, HP_CUTOFF_FREQ, FS, and N_CHANNELS are still global constants
