@@ -45,6 +45,7 @@ def preprocess_rms(data_path: str) -> np.ndarray | np.ndarray:
 
     # ---- 4) Process each class independently ----
     for label_value, emg_signal in emg_by_class.items():
+        print(f"Processing label {label_value} with {emg_signal.shape[0]} samples.")
 
         if len(emg_signal) < WINDOW_SIZE:
             continue  # too short to window
