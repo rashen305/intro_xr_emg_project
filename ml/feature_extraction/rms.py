@@ -1,99 +1,99 @@
 import numpy as np
 import pandas as pd
 from scipy import signal
-from constants import FS, N_CHANNELS, HP_CUTOFF_FREQ, HP_ORDER, WINDOW_SIZE, STRIDE
+from typing import Tuple
+# import your constants or define them here:
+# from constants import FS, N_CHANNELS, HP_CUTOFF_FREQ, HP_ORDER, WINDOW_SIZE, STRIDE
 
-def preprocess_rms(data_path: str) -> np.ndarray | np.ndarray:
+# Example defaults (replace with your constants file)
+FS = 200
+N_CHANNELS = 8
+HP_CUTOFF_FREQ = 10.0
+HP_ORDER = 4
+WINDOW_SIZE = 256
+STRIDE = 50
+
+def preprocess_force_rms(
+    data_path: str,
+    window_size: int = WINDOW_SIZE,
+    stride: int = STRIDE,
+    fs: int = FS,
+    hp_cutoff: float = HP_CUTOFF_FREQ,
+    hp_order: int = HP_ORDER,
+    force_scale_to_percent: bool = True,
+    force_max_value: float | None = None,
+    target_reduce: str = "mean"   # options: "mean", "median", "center", "trimmed_mean"
+) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Loads EMG CSV, splits by label, concatenates all samples of each class,
-    filters, window-slices each class separately, and extracts RMS features.
+    Preprocess EMG+force CSV for regression:
+    - Filters EMG channels
+    - Sliding windows
+    - Extract RMS feature per channel for each window
+    - Compute window-level force target (mean/median/center/trimmed_mean)
 
+    CSV expected layout:
+      timestamp, emg1, emg2, ..., emg8, force
+    (timestamp optional; we ignore it)
     Returns:
-        X: shape (N_windows, N_channels)
-        Y: shape (N_windows,)
+      X: (N_windows, N_CHANNELS)    -- RMS per window per channel
+      y: (N_windows,)               -- continuous force target (float)
     """
-    try:
-        df = pd.read_csv(data_path)
-    except FileNotFoundError:
-        print(f"File not found: {data_path}")
-        return np.array([]), np.array([])
-        
-    # Extract EMG (8 ch) + labels
-    emg = df.iloc[:, 1:1+N_CHANNELS].values 
-    labels = df.iloc[:, -1].values
+    df = pd.read_csv(data_path)
+    # keep only EMG columns (next N_CHANNELS cols) and force last column
+    emg = df.iloc[:, 1:1+N_CHANNELS].values.astype(np.float64)
+    force = df.iloc[:, -1].values.astype(np.float64)
 
-    # TODO: Currently hardcoded for 2 classes
+    # design high-pass filter
+    b_hp, a_hp = signal.butter(hp_order, hp_cutoff, btype='highpass', fs=fs)
 
-    # ---- 1) SPLIT BY LABEL ----
-    class0 = emg[labels == 0]
-    class1 = emg[labels == 1]
-    class2 = emg[labels == 2]
-    class3 = emg[labels == 3]
-    class4 = emg[labels == 4]
+    # (optionally) detrend or remove DC here if you already do that elsewhere
+    # emg = signal.detrend(emg, axis=0, type='constant')
+    # emg = emg - emg.mean(axis=0, keepdims=True)
 
-    # ---- 2) CONCATENATE EACH CLASS INTO ONE CONTINUOUS SIGNAL ----
-    emg_by_class = {
-        0: class0,  # rest
-        1: class1,  # clinched
-        2: class2,  # spread fingers
-        3: class3,  # wrist flexion (inwards)
-        4: class4,  # write extension (outwards)
-    }
+    # filter EMG (zero-phase)
+    emg_f = signal.filtfilt(b_hp, a_hp, emg, axis=0)
 
-    # ---- 3) High-pass filter design ----
-    b, a = signal.butter(HP_ORDER, HP_CUTOFF_FREQ, btype='highpass', fs=FS)
+    X_list = []
+    y_list = []
 
-    X_all = []
-    Y_all = []
+    n_samples = emg_f.shape[0]
+    for start in range(0, n_samples - window_size + 1, stride):
+        win_emg = emg_f[start : start + window_size, :]   # shape (window_size, N_CHANNELS)
+        win_force = force[start : start + window_size]    # shape (window_size,)
 
-    # ---- 4) Process each class independently ----
-    for label_value, emg_signal in emg_by_class.items():
-        print(f"Processing label {label_value} with {emg_signal.shape[0]} samples.")
+        # feature: RMS per channel
+        rms = np.sqrt(np.mean(win_emg**2, axis=0))        # shape (N_CHANNELS,)
 
-        if len(emg_signal) < WINDOW_SIZE:
-            continue  # too short to window
+        # choose force target
+        if target_reduce == "mean":
+            target = float(np.mean(win_force))
+        elif target_reduce == "median":
+            target = float(np.median(win_force))
+        elif target_reduce == "center":
+            center_idx = start + window_size // 2
+            target = float(force[center_idx])
+        elif target_reduce == "trimmed_mean":
+            # drop top/bottom 10% then mean
+            sorted_vals = np.sort(win_force)
+            k = int(round(0.1 * len(sorted_vals)))
+            if len(sorted_vals) - 2*k > 0:
+                target = float(sorted_vals[k:-k].mean())
+            else:
+                target = float(sorted_vals.mean())
+        else:
+            raise ValueError("target_reduce must be one of ['mean','median','center','trimmed_mean']")
 
-        # Filter each concatenated class signal
-        emg_filtered = signal.filtfilt(b, a, emg_signal, axis=0)
-        n_samples = emg_filtered.shape[0]
+        X_list.append(rms)
+        y_list.append(target)
 
-        # ---- 5) Sliding window ----
-        for i in range(0, n_samples - WINDOW_SIZE + 1, STRIDE):
-            window = emg_filtered[i : i + WINDOW_SIZE, :]
+    X = np.array(X_list, dtype=np.float32)
+    y = np.array(y_list, dtype=np.float32)
 
-            # RMS per channel
-            rms_feat = np.sqrt(np.mean(window ** 2, axis=0))
+    # optional: scale force to percentage (0-100) or 0-1 using provided max
+    if force_scale_to_percent:
+        if force_max_value is None:
+            # infer from data (may clip later for real collection)
+            force_max_value = max(force.max(), 1e-6)
+        y = (y / force_max_value) * 100.0
 
-            X_all.append(rms_feat)
-            Y_all.append(label_value)
-
-    return np.array(X_all), np.array(Y_all)
-
-
-def preprocess_rms_realtime(data_window: np.ndarray) -> np.ndarray:
-    """
-    Applies high-pass filtering and calculates the Root Mean Square (RMS) feature.
-    
-    The scaling step is intentionally omitted here as the loaded SVC_MODEL 
-    is a Scikit-learn pipeline that includes a StandardScaler.
-    
-    Input: data_window (np.ndarray) of shape (WINDOW_SIZE, 8)
-    Output: feature_vector (np.ndarray) of shape (1, 8)
-    """
-    # b and a are the numerator and denominator coefficients of the filter
-    b_hp, a_hp = signal.butter(HP_ORDER, HP_CUTOFF_FREQ, btype='highpass', fs=FS)
-
-    # 1. Apply High-Pass Filter (Zero-Phase Lag)
-    # This must match the filtering used during training.
-    emg_filtered = signal.filtfilt(b_hp, a_hp, data_window, axis=0)
-
-    # 2. Calculate RMS: sqrt(mean(x^2)) for each of the 8 channels (axis=0)
-    rms_features = np.sqrt(np.mean(np.square(emg_filtered), axis=0))
-    
-    # 3. Reshape to (1, 8) for scikit-learn's prediction input (1 sample, 8 features)
-    feature_vector = rms_features.reshape(1, -1)
-    
-    # 4. NOTE: No external scaling is performed here. The loaded SVC_MODEL pipeline 
-    # will apply the required Standard Scaling using the parameters learned during training.
-
-    return feature_vector
+    return X, y
