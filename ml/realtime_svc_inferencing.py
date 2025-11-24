@@ -16,7 +16,6 @@ from feature_extraction import rms
 HOST = '127.0.0.1'  # Must match the C++ sender's host
 PORT = 9002         # Must match the C++ sender's port
 BUFFER_SIZE = 1024  # Total number of samples to store
-FEATURE_WINDOW = WINDOW_SIZE # The window size for RMS calculation
 
 # The deque will hold tuples: (timestamp, [emg_channel_1, ..., emg_channel_8])
 emg_buffer = collections.deque(maxlen=BUFFER_SIZE)
@@ -147,7 +146,7 @@ def data_listener_thread():
 
 def inference_worker_thread():
     """Continuously checks the buffer and performs ML inference."""
-    print(f"🧠 Worker: Starting SVC inference thread. Window size: {FEATURE_WINDOW} samples.") 
+    print(f"🧠 Worker: Starting SVC inference thread. Window size: {WINDOW_SIZE} samples.") 
     
     if SVC_MODEL is None:
         print("🧠 Worker: Model failed to load. Stopping worker thread.")
@@ -159,13 +158,13 @@ def inference_worker_thread():
             current_buffer_size = len(emg_buffer)
             
         # Check if we have enough new data for an inference window
-        if current_buffer_size >= FEATURE_WINDOW:
+        if current_buffer_size >= WINDOW_SIZE:
             
             # --- Safely extract the data window ---
             recent_data = None
             with buffer_lock:
-                # Extract only the last FEATURE_WINDOW samples
-                recent_data = list(emg_buffer)[-FEATURE_WINDOW:] 
+                # Extract only the last WINDOW_SIZE samples
+                recent_data = list(emg_buffer)[-WINDOW_SIZE:] 
             
             if recent_data is None:
                 continue
