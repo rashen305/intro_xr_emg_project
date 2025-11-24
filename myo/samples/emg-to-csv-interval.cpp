@@ -13,6 +13,7 @@
 #include <chrono>
 #include <iomanip>
 #include <thread>
+#include <map>
 
 #include <myo/myo.hpp>
 
@@ -23,18 +24,13 @@ public:
         COLLECTING     // 2-5s: Collecting data (3 seconds)
     };
 
-    IntervalDataCollector(const std::string& csvFilename)
-    : emgSamples()
-    , csvFile(csvFilename)
-    , sampleCount(0)
-    , cycleStartTime(std::chrono::high_resolution_clock::now())
-    , programStartTime(std::chrono::high_resolution_clock::now())
-    , currentState(CycleState::HEADS_UP)
-    , isClench(true)  // Start with clench
+    IntervalDataCollector(const std::string& csvFilename): emgSamples(), csvFile(csvFilename), 
+    sampleCount(0), cycleStartTime(std::chrono::high_resolution_clock::now()), programStartTime(std::chrono::high_resolution_clock::now()),
+    currentState(CycleState::HEADS_UP), isClench(true), pairCount(0)  // Start with clench
     {
         // Write CSV header
         if (csvFile.is_open()) {
-            csvFile << "timestamp,sample_number,label,emg1,emg2,emg3,emg4,emg5,emg6,emg7,emg8\n";
+            csvFile << "timestamp,emg1,emg2,emg3,emg4,emg5,emg6,emg7,emg8,label\n";
             csvFile.flush();
         } else {
             throw std::runtime_error("Unable to open CSV file for writing");
@@ -58,6 +54,10 @@ public:
 
     void onEmgData(myo::Myo* myo, uint64_t timestamp, const int8_t* emg)
     {
+        std::map<std::string, int> myDictionary;
+        myDictionary["clench"] = 1;
+        myDictionary["rest"] = 0;
+        
         // Update EMG samples
         for (int i = 0; i < 8; i++) {
             emgSamples[i] = emg[i];
@@ -76,10 +76,17 @@ public:
             newState = CycleState::COLLECTING;
         } else {
             // Cycle complete, start new cycle
+            bool wasRest = !isClench;  // Track if we just finished a rest cycle
             cycleStartTime = currentTime;
             isClench = !isClench;  // Alternate label
+            
+            // Increment pair count when we complete a rest cycle (transitioning back to clench)
+            if (wasRest && isClench) {
+                pairCount++;
+            }
+            
             newState = CycleState::HEADS_UP;
-            std::cout << "\n=== HEADS UP: Get ready for " << (isClench ? "CLENCH" : "REST") << " in 2 seconds... ===" << std::endl;
+            std::cout << "\n=== HEADS UP: Get ready for " << (isClench ? "CLENCH" : "REST") << " in 2 seconds... (Pair #" << pairCount << ") ===" << std::endl;
         }
         
         // Handle state transitions and notifications
@@ -93,12 +100,11 @@ public:
         
         // Only write to CSV during collection phase
         if (currentState == CycleState::COLLECTING && csvFile.is_open()) {
-            csvFile << std::fixed << std::setprecision(6) << programElapsed << ","
-                    << sampleCount << ","
-                    << (isClench ? "clench" : "rest");
+            csvFile << std::fixed << std::setprecision(6) << programElapsed;
             for (int i = 0; i < 8; i++) {
                 csvFile << "," << static_cast<int>(emg[i]);
             }
+            csvFile << "," << (isClench ? myDictionary["clench"] : myDictionary["rest"]);
             csvFile << "\n";
             
             // Flush every 100 samples to ensure data is written
@@ -137,10 +143,11 @@ public:
         }
         std::cout << " [" << stateStr << " - " << (isClench ? "CLENCH" : "REST") << "]";
         
-        // Print cycle time
+        // Print cycle time and pair count
         auto currentTime = std::chrono::high_resolution_clock::now();
         double cycleElapsed = std::chrono::duration<double>(currentTime - cycleStartTime).count();
         std::cout << " Cycle: " << std::fixed << std::setprecision(1) << cycleElapsed << "s";
+        std::cout << " | Pair #" << pairCount;
 
         std::cout << std::flush;
     }
@@ -155,6 +162,7 @@ private:
     std::chrono::high_resolution_clock::time_point programStartTime;
     CycleState currentState;
     bool isClench;  // true for clench, false for rest
+    uint64_t pairCount;  // Number of clench/rest pairs completed
 };
 
 int main(int argc, char** argv)
