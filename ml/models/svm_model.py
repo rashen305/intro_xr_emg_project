@@ -15,10 +15,11 @@ class SVMModel:
         self.model = make_pipeline(
             StandardScaler(), # Feature scaling is crucial for SVM performance
             SVC(
-                C=1.0,           # Regularization parameter
-                kernel=kernel,   # 'rbf' (Radial Basis Function) is a common choice
-                gamma='scale',   # Kernel coefficient
-                probability=True # Allows prediction of probabilities (if needed)
+                C=1.0,              # Regularization parameter
+                kernel=kernel,      # 'rbf' (Radial Basis Function) is a common choice
+                gamma='scale',      # Kernel coefficient
+                probability=True,   # Allows prediction of probabilities (if needed)
+                class_weight='balanced' # balances class weights based on data distribution
             )
         )
         print(f"SVM Model Initialized (Kernel: {kernel})")
