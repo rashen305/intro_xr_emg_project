@@ -27,11 +27,17 @@ def preprocess_rms(data_path: str) -> np.ndarray | np.ndarray:
     # ---- 1) SPLIT BY LABEL ----
     class0 = emg[labels == 0]
     class1 = emg[labels == 1]
+    class2 = emg[labels == 2]
+    class3 = emg[labels == 3]
+    class4 = emg[labels == 4]
 
     # ---- 2) CONCATENATE EACH CLASS INTO ONE CONTINUOUS SIGNAL ----
     emg_by_class = {
         0: class0,  # rest
         1: class1,  # clinched
+        2: class2,  # spread fingers
+        3: class3,  # wrist flexion (inwards)
+        4: class4,  # write extension (outwards)
     }
 
     # ---- 3) High-pass filter design ----

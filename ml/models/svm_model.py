@@ -18,7 +18,8 @@ class SVMModel:
                 C=1.0,           # Regularization parameter
                 kernel=kernel,   # 'rbf' (Radial Basis Function) is a common choice
                 gamma='scale',   # Kernel coefficient
-                probability=True # Allows prediction of probabilities (if needed)
+                probability=True, # Allows prediction of probabilities (if needed)
+                class_weight='balanced',
             )
         )
         print(f"SVM Model Initialized (Kernel: {kernel})")
