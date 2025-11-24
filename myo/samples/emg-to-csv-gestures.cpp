@@ -35,7 +35,7 @@ const std::vector<Gesture> GESTURES = {
     {"flexion", 3},   // TODO: Change "gesture3" to your gesture name
     {"extension", 4},   // TODO: Change "gesture4" to your gesture name
     // Add more gestures as needed
-    // {"gesture5", 5},
+    {"pinch", 5},
     // {"gesture6", 6},
 };
 
