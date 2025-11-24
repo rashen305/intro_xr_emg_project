@@ -22,19 +22,16 @@ def preprocess_rms(data_path: str) -> np.ndarray | np.ndarray:
     emg = df.iloc[:, 1:1+N_CHANNELS].values 
     labels = df.iloc[:, -1].values
 
-    #TODO
-    # Currently hardcode for 2 classes
+    # TODO: Currently hardcoded for 2 classes
 
     # ---- 1) SPLIT BY LABEL ----
     class0 = emg[labels == 0]
     class1 = emg[labels == 1]
-    class2 = emg[labels == 2]
 
     # ---- 2) CONCATENATE EACH CLASS INTO ONE CONTINUOUS SIGNAL ----
     emg_by_class = {
         0: class0,  # rest
         1: class1,  # clinched
-        2: class2,
     }
 
     # ---- 3) High-pass filter design ----
