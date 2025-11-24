@@ -20,6 +20,11 @@
 
 class ForceEMGCollector : public myo::DeviceListener {
 public:
+    enum CollectionState {
+        WAITING,
+        COLLECTING
+    };
+
     ForceEMGCollector(const std::string& csvFilename, PhidgetVoltageRatioInputHandle phidgetHandle)
         : emgSamples()
         , csvFile(csvFilename)
@@ -28,9 +33,13 @@ public:
         , phidgetCh(phidgetHandle)
         , currentWeight(0.0)
         , dataMutex()
+        , state(WAITING)
+        , stateStartTime(std::chrono::high_resolution_clock::now())
+        , waitDuration(10.0)
+        , collectDuration(10.0)
     {
         // Calibration constants
-        gain = -4856.71713119547;
+        gain = -4839.02337806184;
         offset = -1.3201e-5;
         
         // Write CSV header
@@ -44,6 +53,11 @@ public:
         std::cout << "Force and EMG collector initialized" << std::endl;
         std::cout << "EMG rate: 200Hz, Phidget rate: 100Hz" << std::endl;
         std::cout << "Gain: " << gain << ", Offset: " << offset << std::endl;
+        std::cout << "\n=== TIMING PATTERN ===" << std::endl;
+        std::cout << "10 seconds WAITING (showing weight)" << std::endl;
+        std::cout << "10 seconds COLLECTING (recording data)" << std::endl;
+        std::cout << "10 seconds WAITING..." << std::endl;
+        std::cout << "=======================\n" << std::endl;
     }
     
     ~ForceEMGCollector() {
@@ -86,8 +100,8 @@ public:
         auto currentTime = std::chrono::high_resolution_clock::now();
         double programElapsed = std::chrono::duration<double>(currentTime - programStartTime).count();
         
-        // Write to CSV
-        if (csvFile.is_open()) {
+        // Only write to CSV when COLLECTING
+        if (state == COLLECTING && csvFile.is_open()) {
             csvFile << std::fixed << std::setprecision(6) << programElapsed;
             for (int i = 0; i < 8; i++) {
                 csvFile << "," << static_cast<int>(emg[i]);
@@ -104,12 +118,51 @@ public:
         }
     }
 
+    // Update state based on timing
+    void updateState()
+    {
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        double stateElapsed = std::chrono::duration<double>(currentTime - stateStartTime).count();
+        
+        if (state == WAITING && stateElapsed >= waitDuration) {
+            // Switch to COLLECTING
+            state = COLLECTING;
+            stateStartTime = currentTime;
+            std::cout << "\n\n*** STARTING DATA COLLECTION ***\n" << std::endl;
+        } else if (state == COLLECTING && stateElapsed >= collectDuration) {
+            // Switch to WAITING
+            state = WAITING;
+            stateStartTime = currentTime;
+            csvFile.flush(); // Ensure all data is written
+            std::cout << "\n\n*** PAUSING - Get ready for next collection ***\n" << std::endl;
+        }
+    }
+
     // Print the current EMG and weight values
     void print()
     {
         // Clear the current line
         std::cout << '\r';
+        
+        // Calculate time remaining in current state
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        double stateElapsed = std::chrono::duration<double>(currentTime - stateStartTime).count();
+        double timeRemaining = 0.0;
+        
+        if (state == WAITING) {
+            timeRemaining = waitDuration - stateElapsed;
+            std::cout << "[WAITING " << std::fixed << std::setprecision(1) << timeRemaining << "s] ";
+        } else {
+            timeRemaining = collectDuration - stateElapsed;
+            std::cout << "[COLLECTING " << std::fixed << std::setprecision(1) << timeRemaining << "s] ";
+        }
 
+        // Print current weight (always visible)
+        {
+            std::lock_guard<std::mutex> lock(dataMutex);
+            std::cout << "[Weight: " << std::fixed << std::setprecision(3) << currentWeight << " kg] ";
+        }
+        
         // Print out the EMG data
         for (size_t i = 0; i < emgSamples.size(); i++) {
             std::ostringstream oss;
@@ -119,9 +172,6 @@ public:
             std::cout << '[' << emgString << std::string(4 - emgString.size(), ' ') << ']';
         }
         
-        // Print current weight
-        std::lock_guard<std::mutex> lock(dataMutex);
-        std::cout << " [Weight: " << std::fixed << std::setprecision(3) << currentWeight << " kg]";
         std::cout << " [Samples: " << sampleCount << "]";
 
         std::cout << std::flush;
@@ -139,6 +189,12 @@ private:
     double gain;
     double offset;
     std::mutex dataMutex;
+    
+    // Timing control
+    CollectionState state;
+    std::chrono::high_resolution_clock::time_point stateStartTime;
+    double waitDuration;     // seconds
+    double collectDuration;  // seconds
 };
 
 int main(int argc, char** argv)
@@ -208,11 +264,14 @@ int main(int argc, char** argv)
         hub.addListener(&collector);
 
         std::cout << "\nStarting data collection... Press Ctrl+C to stop" << std::endl;
+        std::cout << "First 10 seconds: WAITING (get your weight ready)" << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
         // Main loop - run at 200Hz (5ms intervals)
         while (1) {
             hub.run(5);
+            // Update state based on timing
+            collector.updateState();
             // Print the current EMG and weight values after processing events
             collector.print();
         }
