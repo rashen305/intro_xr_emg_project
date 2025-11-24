@@ -72,7 +72,7 @@ public:
         CycleState newState = currentState;
         if (cycleElapsed < 2.0) {
             newState = CycleState::HEADS_UP;
-        } else if (cycleElapsed < 5.0) {
+        } else if (cycleElapsed < 12.0) {
             newState = CycleState::COLLECTING;
         } else {
             // Cycle complete, start new cycle
