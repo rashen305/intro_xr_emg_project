@@ -3,7 +3,7 @@ import pandas as pd
 from scipy import signal
 from constants import FS, N_CHANNELS, HP_CUTOFF_FREQ, HP_ORDER, WINDOW_SIZE, STRIDE
 
-def preprocess_rms(data_path: str):
+def preprocess_rms(data_path: str) -> np.ndarray | np.ndarray:
     """
     Loads EMG CSV, splits by label, concatenates all samples of each class,
     filters, window-slices each class separately, and extracts RMS features.
@@ -62,3 +62,32 @@ def preprocess_rms(data_path: str):
             Y_all.append(label_value)
 
     return np.array(X_all), np.array(Y_all)
+
+
+def preprocess_rms_realtime(data_window: np.ndarray) -> np.ndarray:
+    """
+    Applies high-pass filtering and calculates the Root Mean Square (RMS) feature.
+    
+    The scaling step is intentionally omitted here as the loaded SVC_MODEL 
+    is a Scikit-learn pipeline that includes a StandardScaler.
+    
+    Input: data_window (np.ndarray) of shape (WINDOW_SIZE, 8)
+    Output: feature_vector (np.ndarray) of shape (1, 8)
+    """
+    # b and a are the numerator and denominator coefficients of the filter
+    b_hp, a_hp = signal.butter(HP_ORDER, HP_CUTOFF_FREQ, btype='highpass', fs=FS)
+
+    # 1. Apply High-Pass Filter (Zero-Phase Lag)
+    # This must match the filtering used during training.
+    emg_filtered = signal.filtfilt(b_hp, a_hp, data_window, axis=0)
+
+    # 2. Calculate RMS: sqrt(mean(x^2)) for each of the 8 channels (axis=0)
+    rms_features = np.sqrt(np.mean(np.square(emg_filtered), axis=0))
+    
+    # 3. Reshape to (1, 8) for scikit-learn's prediction input (1 sample, 8 features)
+    feature_vector = rms_features.reshape(1, -1)
+    
+    # 4. NOTE: No external scaling is performed here. The loaded SVC_MODEL pipeline 
+    # will apply the required Standard Scaling using the parameters learned during training.
+
+    return feature_vector
