@@ -29,7 +29,7 @@ stop_event = threading.Event()
 # --- Model Loading and Feature Extraction Setup ---
 # --------------------------------------------------------------------------
 
-def load_svc_model(filepath="svc_model.pkl"):
+def load_svc_model(filepath="weights/svc_v7.pkl"):
     """Loads the trained SVC model pipeline."""
     try:
         with open(filepath, 'rb') as f:
