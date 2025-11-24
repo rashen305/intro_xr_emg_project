@@ -50,7 +50,7 @@ def actual_inference_caller(data_window: np.ndarray):
         return -1.0, np.zeros(N_CHANNELS)
 
     # 1. Feature Extraction
-    feature_vector = rms.preprocess_rms_realtime(data_window)
+    feature_vector = rms.preprocess_force_rms_realtime(data_window)
 
     # 2. Regression prediction
     predicted_force = SVR_MODEL.predict(feature_vector)[0]
