@@ -10,6 +10,7 @@ import numpy as np
 import pickle
 from scipy import signal 
 from constants import FS, N_CHANNELS, HP_CUTOFF_FREQ, HP_ORDER, N_CHANNELS, WINDOW_SIZE
+from feature_extraction import rms
 
 # --- Configuration ---
 HOST = '127.0.0.1'  # Must match the C++ sender's host
@@ -30,10 +31,6 @@ stop_event = threading.Event()
 # --- Model Loading and Feature Extraction Setup ---
 # --------------------------------------------------------------------------
 
-# 1. Design the High-Pass filter coefficients once globally
-# b and a are the numerator and denominator coefficients of the filter
-b_hp, a_hp = signal.butter(HP_ORDER, HP_CUTOFF_FREQ, btype='highpass', fs=FS)
-
 def load_svc_model(filepath="svc_model.pkl"):
     """Loads the trained SVC model pipeline."""
     try:
@@ -53,32 +50,6 @@ def load_svc_model(filepath="svc_model.pkl"):
 # Load the model once when the script starts
 SVC_MODEL = load_svc_model()
 
-def extract_rms_features(data_window: np.ndarray) -> np.ndarray:
-    """
-    Applies high-pass filtering and calculates the Root Mean Square (RMS) feature.
-    
-    The scaling step is intentionally omitted here as the loaded SVC_MODEL 
-    is a Scikit-learn pipeline that includes a StandardScaler.
-    
-    Input: data_window (np.ndarray) of shape (FEATURE_WINDOW, 8)
-    Output: feature_vector (np.ndarray) of shape (1, 8)
-    """
-    
-    # 1. Apply High-Pass Filter (Zero-Phase Lag)
-    # This must match the filtering used during training.
-    emg_filtered = signal.filtfilt(b_hp, a_hp, data_window, axis=0)
-
-    # 2. Calculate RMS: sqrt(mean(x^2)) for each of the 8 channels (axis=0)
-    rms_features = np.sqrt(np.mean(np.square(emg_filtered), axis=0))
-    
-    # 3. Reshape to (1, 8) for scikit-learn's prediction input (1 sample, 8 features)
-    feature_vector = rms_features.reshape(1, -1)
-    
-    # 4. NOTE: No external scaling is performed here. The loaded SVC_MODEL pipeline 
-    # will apply the required Standard Scaling using the parameters learned during training.
-
-    return feature_vector
-
 # --------------------------------------------------------------------------
 # --- Actual ML Inference Function ---
 # --------------------------------------------------------------------------
@@ -91,7 +62,7 @@ def actual_inference_caller(data_window: np.ndarray):
         return -1, np.zeros(N_CHANNELS)
         
     # 1. Feature Extraction (Filtering + RMS)
-    feature_vector = extract_rms_features(data_window)
+    feature_vector = rms.preprocess_rms_realtime(data_window)
     
     # 2. Run SVC Classification (Pipeline handles internal scaling)
     prediction = SVC_MODEL.predict(feature_vector)[0]
