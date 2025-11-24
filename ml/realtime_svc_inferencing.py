@@ -8,8 +8,7 @@ import time
 import collections
 import numpy as np
 import pickle
-from scipy import signal 
-from constants import FS, N_CHANNELS, HP_CUTOFF_FREQ, HP_ORDER, N_CHANNELS, WINDOW_SIZE
+from constants import N_CHANNELS, N_CHANNELS, WINDOW_SIZE
 from feature_extraction import rms
 
 # --- Configuration ---
