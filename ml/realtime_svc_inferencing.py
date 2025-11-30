@@ -182,6 +182,25 @@ def inference_worker_thread():
                       f"Prediction: **{prediction}** | "
                       f"RMS: {np.round(details, 2)}]", end='', flush=True)
                 
+                '''
+                relevant files:
+                /intro_xr_emg_project/Unity/TankXR/Assets/Scripts/PlayerController.cs
+                /intro_xr_emg_project/Unity/TankXR/Assets/Scripts/SocketReceiver.cs
+                /intro_xr_emg_project/data_transmission/dummy_sender.py -- use as reference for sending data from python
+
+                Packet format is as follows:
+                packet = {
+                    "classification": ["rest", "clench", "spread", "flexion", "extension"],
+                    "force": random.uniform(-2, 2)  -- this could be scrapped since I think we have two separate ML pipelines for classification and force estimation
+                }
+
+                Send this packet to the VR Headset's WiFi IP Address
+                VRHOST = "192.168.1.50"  # placeholder IP, replace with actual headset IP
+                VRPORT_TCP = 9000  # No need to change. Unity will be listening on port 9000 (see SocketReceiver.cs)
+                VRPORT_UDP = 9001  # Same here if using UDP
+                '''
+                # TODO: send prediction packet to Unity via TCP/UDP here
+                
             except Exception as e:
                 print(f"\n❌ Worker: Error during inference: {e}")
                 
