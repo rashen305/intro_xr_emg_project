@@ -13,9 +13,18 @@ HOST = '127.0.0.1'
 PORT = 9002
 BUFFER_SIZE = 1024  # number of EMG samples to keep in buffer
 
+# Smoothing configuration
+SMOOTHING_ALPHA_SLOW = 0.1  # Smoothing factor for stable force (lower = more smoothing)
+SMOOTHING_ALPHA_FAST = 0.6  # Smoothing factor for rapid changes (higher = faster response)
+CHANGE_THRESHOLD = 1.5      # Threshold to detect significant changes (in force units)
+
 emg_buffer = collections.deque(maxlen=BUFFER_SIZE)
 buffer_lock = threading.Lock()
 stop_event = threading.Event()
+
+# Smoothing state
+smoothed_force = None
+smoothing_lock = threading.Lock()
 
 # --------------------------------------------------------------------------
 # --- Model Loading ---
@@ -35,6 +44,42 @@ def load_svr_model(filepath="weights/svr_force_model.pkl"):
         return None
 
 SVR_MODEL = load_svr_model()
+
+# --------------------------------------------------------------------------
+# --- Adaptive Smoothing Function ---
+# --------------------------------------------------------------------------
+def adaptive_smooth_force(new_force: float):
+    """
+    Apply adaptive exponential moving average (EMA) smoothing.
+    Uses fast response for large changes, slow smoothing for small changes.
+    
+    Args:
+        new_force: The new predicted force value
+    
+    Returns:
+        smoothed_force: The smoothed force value
+    """
+    global smoothed_force
+    
+    with smoothing_lock:
+        if smoothed_force is None:
+            # Initialize on first call
+            smoothed_force = new_force
+            return smoothed_force
+        
+        # Calculate the change magnitude
+        change = abs(new_force - smoothed_force)
+        
+        # Adaptive alpha: use fast response for large changes, slow for small
+        if change > CHANGE_THRESHOLD:
+            alpha = SMOOTHING_ALPHA_FAST  # Quick reaction to big changes
+        else:
+            alpha = SMOOTHING_ALPHA_SLOW  # Smooth out small fluctuations
+        
+        # Apply exponential moving average
+        smoothed_force = alpha * new_force + (1 - alpha) * smoothed_force
+        
+        return smoothed_force
 
 # --------------------------------------------------------------------------
 # --- ML Inference Function ---
@@ -117,6 +162,11 @@ def inference_worker_thread():
         print("🧠 Worker: Model failed to load. Exiting thread.")
         return
 
+    # Print rate limiting for force: 5 times per second = 0.2 seconds interval
+    last_force_update_time = 0
+    force_update_interval = 0.2  # seconds (5 Hz)
+    last_displayed_force = 0.0
+    
     while not stop_event.is_set():
         with buffer_lock:
             current_buffer_size = len(emg_buffer)
@@ -130,9 +180,21 @@ def inference_worker_thread():
 
             try:
                 predicted_force, rms_values = actual_inference_caller(data_window)
+                
+                # Apply adaptive smoothing (always smooth, even if not printing)
+                smoothed_force_value = adaptive_smooth_force(predicted_force)
+                
+                # Update displayed force only 5 times per second
+                current_time = time.time()
+                if current_time - last_force_update_time >= force_update_interval:
+                    last_displayed_force = smoothed_force_value
+                    last_force_update_time = current_time
+                
+                # Print timestamp and RMS at full inference rate, force at 5Hz
                 print(f"\r[t={latest_timestamp:.3f}s | "
-                      f"Predicted Force: {predicted_force:.2f} | "
+                      f"Force: {last_displayed_force:.2f} | "
                       f"RMS: {np.round(rms_values, 2)}]", end='', flush=True)
+                    
             except Exception as e:
                 print(f"\n❌ Worker: Inference error: {e}")
         else:
