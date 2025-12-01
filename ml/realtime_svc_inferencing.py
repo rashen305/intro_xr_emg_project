@@ -1,6 +1,3 @@
-# This file implements the EMG listener and realtime ML inference portions of the pipeline
-# It uses a trained SVC model, applying RMS features and required high-pass filtering.
-
 import socket
 import threading
 import json
@@ -8,13 +5,18 @@ import time
 import collections
 import numpy as np
 import pickle
-from constants import N_CHANNELS, N_CHANNELS, WINDOW_SIZE
+from typing import Optional # New import for Optional type hint
+from constants import N_CHANNELS, WINDOW_SIZE # Note: constants.N_CHANNELS was duplicated in original
 from feature_extraction import rms
 
-# --- Configuration ---
+# --- Configuration for EMG Listener (Server side) ---
 HOST = '127.0.0.1'  # Must match the C++ sender's host
 PORT = 9002         # Must match the C++ sender's port
 BUFFER_SIZE = 1024  # Total number of samples to store
+
+# --- Configuration for Unity Sender (Client side) ---
+VRHOST = '172.26.92.82'  # Headset IP Address on CMU-Secure
+VRPORT_TCP = 50000       # TCP Port for Unity Receiver
 
 # The deque will hold tuples: (timestamp, [emg_channel_1, ..., emg_channel_8])
 emg_buffer = collections.deque(maxlen=BUFFER_SIZE)
@@ -24,6 +26,10 @@ buffer_lock = threading.Lock()
 
 # Flag to control the main loops
 stop_event = threading.Event()
+
+# --- Global TCP Variables for Persistence ---
+tcp_socket: Optional[socket.socket] = None
+tcp_connected: bool = False
 
 # --------------------------------------------------------------------------
 # --- Model Loading and Feature Extraction Setup ---
@@ -70,6 +76,74 @@ def actual_inference_caller(data_window: np.ndarray):
     
     return prediction, mean_abs_emg
 
+
+# --------------------------------------------------------------------------
+# --- TCP Connection and Sender Functions (COPIED/ADAPTED from dummy_sender.py) ---
+# --------------------------------------------------------------------------
+
+def connect_tcp_socket(host, port) -> Optional[socket.socket]:
+    """Establishes a single, persistent TCP connection."""
+    global tcp_socket, tcp_connected
+    
+    if tcp_connected and tcp_socket:
+        return tcp_socket
+
+    print(f"[UNITY-TCP] Attempting to establish persistent connection to {host}:{port}...")
+    
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((host, port))
+        
+        tcp_socket = s
+        tcp_connected = True
+        print("[UNITY-TCP] *** PERSISTENT CONNECTION ESTABLISHED ***")
+        return tcp_socket
+        
+    except ConnectionRefusedError:
+        print(f"[UNITY-TCP] Connection refused. Ensure Unity receiver is running on {host}:{port}.")
+        tcp_connected = False
+        return None
+    except Exception as e:
+        print(f"[UNITY-TCP] Error during connection: {e}")
+        tcp_connected = False
+        return None
+
+def send_tcp_data_persistent(data_string):
+    """Sends data using the persistent TCP connection."""
+    global tcp_socket, tcp_connected
+    
+    if not tcp_connected or not tcp_socket:
+        # We don't print a message here to keep the terminal output clean; 
+        # the connect_tcp_socket call handles the status.
+        return False
+        
+    # Append a newline character for the Unity receiver to delimit packets.
+    message = (data_string + '\n').encode('utf-8')
+
+    try:
+        tcp_socket.sendall(message)
+        # Optional: Print confirmation if debugging, but removing for performance
+        # print(f"[UNITY-TCP] Sent: '{message.decode().strip()}'")
+        return True
+    except ConnectionResetError:
+        print("\n[UNITY-TCP] Connection reset by peer. Reconnecting...")
+        tcp_socket.close()
+        tcp_connected = False
+        return False
+    except BrokenPipeError:
+        print("\n[UNITY-TCP] Broken pipe. Connection lost. Reconnecting...")
+        tcp_socket.close()
+        tcp_connected = False
+        return False
+    except Exception as e:
+        print(f"\n[UNITY-TCP] Error during send: {e}. Reconnecting...")
+        try:
+            tcp_socket.close()
+        except:
+            pass
+        tcp_connected = False
+        return False
+        
 # --------------------------------------------------------------------------
 # --- Thread 1: Data Listener and Buffer Manager ---
 # --------------------------------------------------------------------------
@@ -144,7 +218,8 @@ def data_listener_thread():
 # --------------------------------------------------------------------------
 
 def inference_worker_thread():
-    """Continuously checks the buffer and performs ML inference."""
+    """Continuously checks the buffer, performs ML inference, and sends results."""
+    global tcp_connected
     print(f"🧠 Worker: Starting SVC inference thread. Window size: {WINDOW_SIZE} samples.") 
     
     if SVC_MODEL is None:
@@ -152,6 +227,10 @@ def inference_worker_thread():
         return
 
     while not stop_event.is_set():
+        # --- NEW: Check and Maintain TCP Connection to Unity ---
+        if not tcp_connected:
+            connect_tcp_socket(VRHOST, VRPORT_TCP)
+
         current_buffer_size = 0
         with buffer_lock:
             current_buffer_size = len(emg_buffer)
@@ -182,27 +261,18 @@ def inference_worker_thread():
                       f"Prediction: **{prediction}** | "
                       f"RMS: {np.round(details, 2)}]", end='', flush=True)
                 
-                '''
-                relevant files:
-                /intro_xr_emg_project/Unity/TankXR/Assets/Scripts/PlayerController.cs
-                /intro_xr_emg_project/Unity/TankXR/Assets/Scripts/SocketReceiver.cs
-                /intro_xr_emg_project/data_transmission/dummy_sender.py -- use as reference for sending data from python
-
-                Packet format is as follows:
-                packet = {
-                    "classification": ["rest", "clench", "spread", "flexion", "extension"],
-                    "force": random.uniform(-2, 2)  -- this could be scrapped since I think we have two separate ML pipelines for classification and force estimation
+                # --- NEW: Build and Send Prediction Packet ---
+                # 1. Build the DataPacket structure
+                prediction_packet = {
+                    "classification": prediction,
                 }
-
-                Send this packet to the VR Headset's WiFi IP Address
-                VRHOST = "192.168.1.50"  # placeholder IP, replace with actual headset IP
-                VRPORT_TCP = 9000  # No need to change. Unity will be listening on port 9000 (see SocketReceiver.cs)
-                VRPORT_UDP = 9001  # Same here if using UDP
-                '''
-                # TODO: send prediction packet to Unity via TCP/UDP here
+                json_string = json.dumps(prediction_packet)
                 
+                # 2. Send via Persistent TCP Connection
+                send_tcp_data_persistent(json_string)
+
             except Exception as e:
-                print(f"\n❌ Worker: Error during inference: {e}")
+                print(f"\n❌ Worker: Error during inference or send: {e}")
                 
         else:
             # Wait a short period if the buffer is not yet full enough
@@ -244,6 +314,11 @@ def main():
         listener_thread.join()
         worker_thread.join()
         
+        # Clean up the global TCP socket on shutdown
+        global tcp_socket
+        if tcp_socket:
+             tcp_socket.close()
+             
         print("🎉 Main: All threads terminated. Program finished.")
 
 if __name__ == '__main__':
