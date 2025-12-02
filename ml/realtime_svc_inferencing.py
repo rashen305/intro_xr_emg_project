@@ -15,11 +15,34 @@ PORT = 9002         # Must match the C++ sender's port
 BUFFER_SIZE = 1024  # Total number of samples to store
 
 # --- Configuration for Unity Sender (Client side) ---
-VRHOST = '172.26.92.82'  # Headset IP Address on CMU-Secure
+VRHOST = '172.26.92.82'  # Headset IP Address on CMU-Secure laptop address 172.26.103.154/ headset address 172.26.92.82
 VRPORT_TCP = 50000       # TCP Port for Unity Receiver
+
+# --- Prediction Label Mapping ---
+PREDICTION_LABELS = {
+    0: "rest",
+    1: "clench",
+    2: "spread",
+    3: "flexion",
+    4: "extension"
+}
+
+# --- Prediction Smoothing Configuration ---
+CONSECUTIVE_PREDICTIONS_REQUIRED = 5  # Default consecutive predictions for most gestures
+CONSECUTIVE_PREDICTIONS_SPREAD = 10    # Require more consecutive predictions for "spread" gesture (prediction 2)
+
+# --- Inference Rate Configuration ---
+INFERENCE_RATE_HZ = 50  # Target inference rate in Hz
+INFERENCE_INTERVAL = 1.0 / INFERENCE_RATE_HZ  # Time between inferences in seconds (0.01s = 10ms)
 
 # The deque will hold tuples: (timestamp, [emg_channel_1, ..., emg_channel_8])
 emg_buffer = collections.deque(maxlen=BUFFER_SIZE)
+
+# Prediction smoothing state
+# Use the maximum of the two thresholds for the deque size
+prediction_history = collections.deque(maxlen=max(CONSECUTIVE_PREDICTIONS_REQUIRED, CONSECUTIVE_PREDICTIONS_SPREAD))
+current_stable_prediction = 0  # Start with "rest"
+prediction_lock = threading.Lock()
 
 # Lock for safe access to the shared emg_buffer
 buffer_lock = threading.Lock()
@@ -35,7 +58,7 @@ tcp_connected: bool = False
 # --- Model Loading and Feature Extraction Setup ---
 # --------------------------------------------------------------------------
 
-def load_svc_model(filepath="weights/svc_v7.pkl"):
+def load_svc_model(filepath="weights/svc_v9.pkl"):
     """Loads the trained SVC model pipeline."""
     try:
         with open(filepath, 'rb') as f:
@@ -53,6 +76,60 @@ def load_svc_model(filepath="weights/svc_v7.pkl"):
 
 # Load the model once when the script starts
 SVC_MODEL = load_svc_model()
+
+# --------------------------------------------------------------------------
+# --- Prediction Smoothing Function ---
+# --------------------------------------------------------------------------
+
+def smooth_prediction(raw_prediction: int) -> int:
+    """
+    Apply temporal smoothing to predictions.
+    Only changes the output prediction if the same prediction appears
+    CONSECUTIVE_PREDICTIONS_REQUIRED times in a row.
+    
+    SPECIAL CASES:
+    - "rest" (0): switches immediately without requiring consecutive predictions
+    - "spread" (2): requires CONSECUTIVE_PREDICTIONS_SPREAD (30) consecutive predictions
+    - Others: require CONSECUTIVE_PREDICTIONS_REQUIRED (15) consecutive predictions
+    
+    Args:
+        raw_prediction: The raw prediction from the model
+        
+    Returns:
+        The smoothed (stable) prediction
+    """
+    global current_stable_prediction, prediction_history
+    
+    with prediction_lock:
+        # SPECIAL CASE: If prediction is "rest" (0), switch immediately
+        if raw_prediction == 0:
+            current_stable_prediction = 0
+            prediction_history.clear()  # Clear history for fresh start
+            return current_stable_prediction
+        
+        # Add the new prediction to history
+        prediction_history.append(raw_prediction)
+        
+        # Determine required consecutive predictions based on gesture type
+        if raw_prediction == 2:  # "spread" gesture
+            required_count = CONSECUTIVE_PREDICTIONS_SPREAD
+        else:
+            required_count = CONSECUTIVE_PREDICTIONS_REQUIRED
+        
+        # Check if we have enough predictions
+        if len(prediction_history) < required_count:
+            # Not enough history yet, return current stable prediction
+            return current_stable_prediction
+        
+        # Check if all recent predictions are identical
+        if len(set(prediction_history)) == 1:
+            # All predictions in history are the same
+            new_prediction = prediction_history[0]
+            if new_prediction != current_stable_prediction:
+                # Update the stable prediction
+                current_stable_prediction = new_prediction
+        
+        return current_stable_prediction
 
 # --------------------------------------------------------------------------
 # --- Actual ML Inference Function ---
@@ -221,10 +298,19 @@ def inference_worker_thread():
     """Continuously checks the buffer, performs ML inference, and sends results."""
     global tcp_connected
     print(f"🧠 Worker: Starting SVC inference thread. Window size: {WINDOW_SIZE} samples.") 
+    print(f"🧠 Worker: Target inference rate: {INFERENCE_RATE_HZ} Hz")
     
     if SVC_MODEL is None:
         print("🧠 Worker: Model failed to load. Stopping worker thread.")
         return
+
+    # Inference rate tracking
+    inference_count = 0
+    last_rate_update = time.time()
+    current_inference_rate = 0.0
+    
+    # Inference timing control
+    last_inference_time = 0.0
 
     while not stop_event.is_set():
         # --- NEW: Check and Maintain TCP Connection to Unity ---
@@ -237,6 +323,19 @@ def inference_worker_thread():
             
         # Check if we have enough new data for an inference window
         if current_buffer_size >= WINDOW_SIZE:
+            
+            # --- Rate limiting: Check if enough time has passed since last inference ---
+            current_time = time.time()
+            time_since_last_inference = current_time - last_inference_time
+            
+            if time_since_last_inference < INFERENCE_INTERVAL:
+                # Not enough time has passed, wait a bit
+                sleep_time = INFERENCE_INTERVAL - time_since_last_inference
+                time.sleep(sleep_time)
+                continue
+            
+            # Update last inference time
+            last_inference_time = current_time
             
             # --- Safely extract the data window ---
             recent_data = None
@@ -254,21 +353,36 @@ def inference_worker_thread():
             
             # --- Run Inference ---
             try:
-                prediction, details = actual_inference_caller(data_window)
+                raw_prediction, details = actual_inference_caller(data_window)
+                
+                # Update inference rate counter
+                inference_count += 1
+                current_time = time.time()
+                if current_time - last_rate_update >= 1.0:
+                    current_inference_rate = inference_count / (current_time - last_rate_update)
+                    inference_count = 0
+                    last_rate_update = current_time
+                
+                # Apply temporal smoothing to reduce false positives
+                smoothed_prediction = smooth_prediction(int(raw_prediction))
+                
+                # Convert predictions to string labels
+                raw_label = PREDICTION_LABELS.get(int(raw_prediction), "unknown")
+                smoothed_label = PREDICTION_LABELS.get(smoothed_prediction, "unknown")
                 
                 # Print results in a single line (using carriage return)
-                print(f"\r[t={latest_timestamp:.3f}s | "
-                      f"Prediction: **{prediction}** | "
+                print(f"\r[{current_inference_rate:.1f} Hz | "
+                      f"Raw: {raw_label} → Smoothed: **{smoothed_label}** | "
                       f"RMS: {np.round(details, 2)}]", end='', flush=True)
                 
                 # --- NEW: Build and Send Prediction Packet ---
-                # 1. Build the DataPacket structure
+                # Build the DataPacket structure with smoothed label
                 prediction_packet = {
-                    "classification": prediction,
+                    "classification": smoothed_label,  # Send smoothed label to Unity
                 }
                 json_string = json.dumps(prediction_packet)
                 
-                # 2. Send via Persistent TCP Connection
+                # Send via Persistent TCP Connection
                 send_tcp_data_persistent(json_string)
 
             except Exception as e:
